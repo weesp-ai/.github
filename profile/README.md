@@ -8,9 +8,3 @@ Bracket (formerly Weesp) is a task management system that puts **Context** at th
 - **Autonomous AI agents** — agents that can be assigned to tasks and accomplish them autonomously.
 - **Intelligent assistant** — a proactive aide that drafts and sends email, performs research, and executes sub-tasks to move work forward.
 - **Deep integrations** — a roadmap focused on connecting with the ecosystem of work tools (Google Workspace, HubSpot, Salesforce, Linear, Jira) to provide context and execute actions across platforms.
-
-## Repositories
-
-- **[`mono`](https://github.com/weesp-ai/mono)** — the product monorepo: the Go API server, the React console, the Playwright end-to-end suite, the Helm chart, and per-environment Terraform.
-- **[`cluster`](https://github.com/weesp-ai/cluster)** — Argo CD GitOps for the `primary-v2` GKE cluster.
-- **[`infrastructure`](https://github.com/weesp-ai/infrastructure)** — global Google Cloud infrastructure-as-code: project, IAM, DNS, GKE clusters, networking, and Secret Manager.
