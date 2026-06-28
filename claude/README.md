@@ -20,13 +20,18 @@ makes them fire in both layouts. This was validated end to end before adoption.
 
 ## Use it
 
-Paste this into each cloud environment's **Setup script** field, pinned to a tag
-or commit so the script can't change underneath a running environment:
+Paste this into each cloud environment's **Setup script** field. It fetches a
+pinned tag as an HTTPS tarball — a `git clone` of this repo is blocked by the
+session's scope proxy, so use the tarball, not `git clone`:
 
 ```bash
-git clone --depth 1 --branch <PINNED_TAG> https://github.com/weesp-ai/.github /tmp/bracket-claude \
+mkdir -p /tmp/bracket-claude \
+  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v2.tar.gz \
+     | tar -xz -C /tmp/bracket-claude --strip-components=1 \
   && bash /tmp/bracket-claude/claude/cloud-setup.sh
 ```
+
+Bump the tag when you cut a new release (see [Updating](#updating)).
 
 ## Required environment variables (set per environment)
 
@@ -64,5 +69,6 @@ developer's own tools, auth, and Docker — unchanged.
 
 ## Updating
 
-Edit the files here, merge, then bump `<PINNED_TAG>` in each environment's setup
-field. Existing environments keep their snapshot until recreated.
+Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v3`) and
+bump it in each environment's setup-script URL. Existing environments keep their
+snapshot until recreated.
