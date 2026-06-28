@@ -26,7 +26,7 @@ session's scope proxy, so use the tarball, not `git clone`:
 
 ```bash
 mkdir -p /tmp/bracket-claude \
-  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v3.tar.gz \
+  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v4.tar.gz \
      | tar -xz -C /tmp/bracket-claude --strip-components=1 \
   && bash /tmp/bracket-claude/claude/cloud-setup.sh
 ```
@@ -50,16 +50,29 @@ filesystem is then snapshotted and reused):
 
 1. Installs the user-scope hooks into `/root/.claude/`.
 2. Installs CLI tools if missing: `gcloud`, `kubectl`,
-   `gke-gcloud-auth-plugin`, `gh`, `docker.io`, `terraform`, `jq`.
+   `gke-gcloud-auth-plugin`, `gh`, `docker.io`, `terraform`, `jq`. `apt` is
+   pointed at the sandbox egress proxy (it doesn't read `$HTTPS_PROXY` on its
+   own) so the Google Cloud apt repo is reachable.
 3. Writes `/etc/docker/daemon.json` (Docker Hub pull-through mirror).
 
 The installed hooks run **every session**:
 
-- `session-start.sh` — authenticates `gcloud` + ADC as `claude-code-bot`, points
-  `kubectl` at `primary-v2` (DNS endpoint), starts `dockerd`.
+- `session-start.sh` — installs any still-missing tool (self-heal), authenticates
+  `gcloud` + ADC as `claude-code-bot`, points `kubectl` at `primary-v2` (DNS
+  endpoint), starts `dockerd`.
 - `session-end.sh` — stops `dockerd` (best-effort).
 - `check-neon-sql.sh` — `PreToolUse` guard that routes Neon write/DDL SQL to a
   confirmation prompt; read-only SQL is auto-allowed.
+
+## Debugging
+
+The setup script runs pre-launch and its console output isn't retrievable later,
+so both scripts log to files. From any session in the environment:
+
+```bash
+cat /root/.claude/cloud-setup.log     # one-time setup (tool installs)
+cat /root/.claude/session-start.log   # per-session auth / gke / dockerd
+```
 
 ## Local sessions
 
@@ -69,6 +82,6 @@ developer's own tools, auth, and Docker — unchanged.
 
 ## Updating
 
-Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v4`) and
+Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v5`) and
 bump it in each environment's setup-script URL. Existing environments keep their
 snapshot until recreated.

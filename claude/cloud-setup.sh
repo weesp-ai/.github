@@ -19,12 +19,35 @@
 # public. See claude/README.md.
 set -uo pipefail
 
+mkdir -p /root/.claude/hooks
+LOG_FILE="/root/.claude/cloud-setup.log"
+# Capture all output to a file the session can print back — this runs pre-launch
+# and its console output isn't retrievable from a session otherwise.
+exec > >(tee -a "$LOG_FILE") 2>&1
+echo "===== cloud-setup run $(date -u +%FT%TZ 2>/dev/null || true) ====="
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TERRAFORM_VERSION="1.15.5"
-log() { echo "cloud-setup: $*" >&2; }
+log() { echo "cloud-setup: $*"; }
+
+# The sandbox egress proxy is TLS-inspecting; trust its CA so HTTPS works. And
+# unlike curl, apt does NOT read $HTTPS_PROXY — so added HTTPS repos (e.g.
+# packages.cloud.google.com) are unreachable until we pass the proxy to apt
+# explicitly. The proxy port changes between sessions, so read it per call.
+if [[ -f /root/.ccr/ca-bundle.crt && -d /usr/local/share/ca-certificates ]]; then
+  if ! cmp -s /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/bracket-egress.crt 2>/dev/null; then
+    cp /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/bracket-egress.crt \
+      && update-ca-certificates >/dev/null 2>&1 || true
+  fi
+fi
+apt_get() {
+  local -a px=()
+  [[ -n "${HTTPS_PROXY:-}" ]] && px=(-o "Acquire::http::Proxy=${HTTP_PROXY:-$HTTPS_PROXY}" -o "Acquire::https::Proxy=$HTTPS_PROXY")
+  DEBIAN_FRONTEND=noninteractive apt-get "${px[@]}" "$@"
+}
+apt_install() { apt_get install -y -qq "$@" || log "WARN: failed to install: $*"; }
 
 # --- 1. user-scope hooks (critical; do this first) ------------------------
-mkdir -p /root/.claude/hooks
 install -m 0755 "$SCRIPT_DIR/hooks/session-start.sh"  /root/.claude/hooks/session-start.sh
 install -m 0755 "$SCRIPT_DIR/hooks/session-end.sh"    /root/.claude/hooks/session-end.sh
 install -m 0755 "$SCRIPT_DIR/hooks/check-neon-sql.sh" /root/.claude/hooks/check-neon-sql.sh
@@ -34,29 +57,25 @@ fi
 install -m 0644 "$SCRIPT_DIR/settings.json" /root/.claude/settings.json
 log "installed hooks + settings under /root/.claude"
 
-# --- 2. tools (best-effort; installed per-repo so one failure can't abort the
-#     rest — e.g. an unavailable `gh` must not take google-cloud-cli down) ----
+# --- 2. tools -------------------------------------------------------------
 if ! command -v apt-get >/dev/null 2>&1; then
   log "apt-get unavailable; skipping tool installs (expecting a Debian/Ubuntu image)"
   exit 0
 fi
 
-apt_install() {
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >&2 || log "WARN: failed to install: $*"
-}
-
-DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
-# Prereqs for adding the signed apt repos below.
+apt_get update -qq || log "WARN: apt-get update failed"
 apt_install ca-certificates gnupg curl
 
-# Default-repo tools.
+# Default-repo tools. gh ships in Ubuntu's universe repo, so no extra repo is
+# needed (and the cli.github.com repo is blocked by the github-domain proxy).
 command -v jq      >/dev/null 2>&1 || apt_install jq
 command -v unzip   >/dev/null 2>&1 || apt_install unzip
 command -v dockerd >/dev/null 2>&1 || apt_install docker.io
+command -v gh      >/dev/null 2>&1 || apt_install gh
 
-# Google Cloud SDK repo -> google-cloud-cli, kubectl, gke auth plugin.
-# --batch --no-tty: the container has no controlling terminal, so a bare
-# `gpg --dearmor` would abort on /dev/tty.
+# Google Cloud SDK repo -> google-cloud-cli, kubectl, gke auth plugin. The repo
+# key is fetched with curl (which honours the proxy); the install uses apt_get
+# (which now does too). --batch --no-tty: no controlling terminal for gpg.
 if ! { command -v gcloud && command -v kubectl && command -v gke-gcloud-auth-plugin; } >/dev/null 2>&1; then
   if [[ ! -f /usr/share/keyrings/cloud.google.gpg ]]; then
     log "configuring Google Cloud apt repo"
@@ -66,24 +85,8 @@ if ! { command -v gcloud && command -v kubectl && command -v gke-gcloud-auth-plu
          > /etc/apt/sources.list.d/google-cloud-sdk.list \
       || log "WARN: failed to configure Google Cloud apt repo"
   fi
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
+  apt_get update -qq || log "WARN: apt-get update failed"
   apt_install google-cloud-cli kubectl google-cloud-cli-gke-gcloud-auth-plugin
-fi
-
-# GitHub CLI repo -> gh. gh is NOT in Ubuntu's default repos, so the repo must
-# be added before installing it, and kept in its own apt transaction so a miss
-# here can't abort the google-cloud-cli install above.
-if ! command -v gh >/dev/null 2>&1; then
-  if [[ ! -f /usr/share/keyrings/githubcli-archive-keyring.gpg ]]; then
-    log "configuring GitHub CLI apt repo"
-    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
-      | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
-      && echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
-         > /etc/apt/sources.list.d/github-cli.list \
-      || log "WARN: failed to configure GitHub CLI apt repo"
-  fi
-  DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
-  apt_install gh
 fi
 
 # Terraform: pinned release zip (curl, not apt, for a reproducible version).
@@ -118,4 +121,7 @@ if [[ ! -f /etc/docker/daemon.json ]]; then
 JSON
 fi
 
-log "done"
+log "done — final tool check:"
+for b in gcloud kubectl gke-gcloud-auth-plugin gh terraform docker jq; do
+  command -v "$b" >/dev/null 2>&1 && echo "  ok   $b" || echo "  MISS $b"
+done
