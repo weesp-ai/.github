@@ -50,16 +50,25 @@ if command -v gcloud >/dev/null 2>&1 && [[ -n "${GCP_SERVICE_ACCOUNT_KEY_B64:-}"
   key_file="${key_dir}/claude-code-bot.json"
   printf '%s' "${GCP_SERVICE_ACCOUNT_KEY_B64}" | base64 -d > "$key_file" 2>/dev/null && chmod 600 "$key_file"
   if python3 -c 'import json,sys; json.load(open(sys.argv[1]))' "$key_file" >/dev/null 2>&1; then
-    gcloud auth activate-service-account --key-file="$key_file" --quiet >&2 \
-      && gcloud config set project "$GCP_PROJECT" --quiet >&2 \
-      && log "gcloud authenticated ($(gcloud config get-value account 2>/dev/null), project ${GCP_PROJECT})"
-    # Hand ADC + project to the Claude session. CLAUDE_ENV_FILE is the
-    # SessionStart-hook mechanism for exporting env vars to the session.
-    if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
-      {
-        echo "GOOGLE_APPLICATION_CREDENTIALS=$key_file"
-        echo "CLOUDSDK_CORE_PROJECT=$GCP_PROJECT"
-      } >> "$CLAUDE_ENV_FILE"
+    if gcloud auth activate-service-account --key-file="$key_file" --quiet >&2; then
+      # The platform injects CLOUDSDK_AUTH_ACCESS_TOKEN — a token type some GCP
+      # APIs (cloudresourcemanager, container) reject (ACCESS_TOKEN_TYPE_
+      # UNSUPPORTED). gcloud prefers it over the activated key, so drop it here
+      # and (via CLAUDE_ENV_FILE) in the session, leaving the valid SA key.
+      unset CLOUDSDK_AUTH_ACCESS_TOKEN
+      gcloud config set project "$GCP_PROJECT" --quiet >&2 || true
+      log "gcloud authenticated ($(gcloud config get-value account 2>/dev/null), project ${GCP_PROJECT})"
+      # Hand ADC + project to the Claude session, and clear the injected token
+      # there too. CLAUDE_ENV_FILE is the SessionStart mechanism for this.
+      if [[ -n "${CLAUDE_ENV_FILE:-}" ]]; then
+        {
+          echo "GOOGLE_APPLICATION_CREDENTIALS=$key_file"
+          echo "CLOUDSDK_CORE_PROJECT=$GCP_PROJECT"
+          echo "unset CLOUDSDK_AUTH_ACCESS_TOKEN"
+        } >> "$CLAUDE_ENV_FILE"
+      fi
+    else
+      log "WARN: gcloud activate-service-account failed"
     fi
   else
     log "WARN: GCP_SERVICE_ACCOUNT_KEY_B64 did not decode to valid JSON; skipping gcloud auth"
