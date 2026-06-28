@@ -1,0 +1,17 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "hooks": {
+    "SessionStart": [
+      { "hooks": [{ "type": "command", "command": "/root/.claude/hooks/session-start.sh" }] }
+    ],
+    "SessionEnd": [
+      { "hooks": [{ "type": "command", "command": "/root/.claude/hooks/session-end.sh" }] }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "mcp__neon__run_sql|mcp__neon__run_sql_transaction",
+        "hooks": [{ "type": "command", "command": "/root/.claude/hooks/check-neon-sql.sh" }]
+      }
+    ]
+  }
+}
