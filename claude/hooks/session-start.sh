@@ -22,6 +22,18 @@ exec 2>>"$LOG_FILE"
 echo "===== session-start run $(date -u +%FT%TZ 2>/dev/null || true) =====" >&2
 log() { echo "session-start: $*" >&2; }
 
+# TEMPORARY (v7) debug: characterise the injected CLOUDSDK_AUTH_ACCESS_TOKEN
+# BEFORE we unset it below, so we can see what it actually is. Prints length,
+# format prefix, and Google's tokeninfo (never the full token). Remove once
+# understood.
+dbg_token() {
+  local t="${CLOUDSDK_AUTH_ACCESS_TOKEN:-}"
+  if [[ -z "$t" ]]; then log "DEBUG CLOUDSDK_AUTH_ACCESS_TOKEN: unset/empty"; return; fi
+  log "DEBUG CLOUDSDK_AUTH_ACCESS_TOKEN: len=${#t} first16='${t:0:16}' last6='${t: -6}'"
+  log "DEBUG tokeninfo: $(curl -s https://oauth2.googleapis.com/tokeninfo --data-urlencode "access_token=$t" 2>/dev/null)"
+}
+dbg_token
+
 # --- self-heal CLI tools --------------------------------------------------
 # cloud-setup.sh installs these into the snapshot, but if a pre-launch install
 # missed one, install it here in session context. Plain apt (default Ubuntu

@@ -33,6 +33,17 @@ echo "===== cloud-setup run $(date -u +%FT%TZ 2>/dev/null || true) ====="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TERRAFORM_VERSION="1.15.5"
 log() { echo "cloud-setup: $*"; }
+
+# TEMPORARY (v7) debug: characterise the injected CLOUDSDK_AUTH_ACCESS_TOKEN so
+# we can see what it actually is. Prints length, format prefix, and Google's
+# tokeninfo (never the full token). Remove once understood.
+dbg_token() {
+  local t="${CLOUDSDK_AUTH_ACCESS_TOKEN:-}"
+  if [[ -z "$t" ]]; then log "DEBUG CLOUDSDK_AUTH_ACCESS_TOKEN: unset/empty"; return; fi
+  log "DEBUG CLOUDSDK_AUTH_ACCESS_TOKEN: len=${#t} first16='${t:0:16}' last6='${t: -6}'"
+  log "DEBUG tokeninfo: $(curl -s https://oauth2.googleapis.com/tokeninfo --data-urlencode "access_token=$t" 2>/dev/null)"
+}
+dbg_token
 apt_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" || log "WARN: failed to install: $*"; }
 
 # --- 1. user-scope hooks (critical; do this first) ------------------------
