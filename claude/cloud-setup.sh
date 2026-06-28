@@ -17,6 +17,10 @@
 # environment injects at runtime (GCP_SERVICE_ACCOUNT_KEY_B64, GCP_PROJECT,
 # GH_TOKEN, NEON_API_KEY); nothing secret is committed, so this repo can be
 # public. See claude/README.md.
+#
+# NOTE: installing google-cloud-cli / kubectl / gke-gcloud-auth-plugin requires
+# the environment's network policy to allow packages.cloud.google.com. If that
+# host is blocked, those installs fail (logged) and the rest still proceed.
 set -uo pipefail
 
 mkdir -p /root/.claude/hooks
@@ -29,23 +33,7 @@ echo "===== cloud-setup run $(date -u +%FT%TZ 2>/dev/null || true) ====="
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TERRAFORM_VERSION="1.15.5"
 log() { echo "cloud-setup: $*"; }
-
-# The sandbox egress proxy is TLS-inspecting; trust its CA so HTTPS works. And
-# unlike curl, apt does NOT read $HTTPS_PROXY — so added HTTPS repos (e.g.
-# packages.cloud.google.com) are unreachable until we pass the proxy to apt
-# explicitly. The proxy port changes between sessions, so read it per call.
-if [[ -f /root/.ccr/ca-bundle.crt && -d /usr/local/share/ca-certificates ]]; then
-  if ! cmp -s /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/bracket-egress.crt 2>/dev/null; then
-    cp /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/bracket-egress.crt \
-      && update-ca-certificates >/dev/null 2>&1 || true
-  fi
-fi
-apt_get() {
-  local -a px=()
-  [[ -n "${HTTPS_PROXY:-}" ]] && px=(-o "Acquire::http::Proxy=${HTTP_PROXY:-$HTTPS_PROXY}" -o "Acquire::https::Proxy=$HTTPS_PROXY")
-  DEBIAN_FRONTEND=noninteractive apt-get "${px[@]}" "$@"
-}
-apt_install() { apt_get install -y -qq "$@" || log "WARN: failed to install: $*"; }
+apt_install() { DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" || log "WARN: failed to install: $*"; }
 
 # --- 1. user-scope hooks (critical; do this first) ------------------------
 install -m 0755 "$SCRIPT_DIR/hooks/session-start.sh"  /root/.claude/hooks/session-start.sh
@@ -57,13 +45,14 @@ fi
 install -m 0644 "$SCRIPT_DIR/settings.json" /root/.claude/settings.json
 log "installed hooks + settings under /root/.claude"
 
-# --- 2. tools -------------------------------------------------------------
+# --- 2. tools (plain apt; default Ubuntu repos are reachable directly — do NOT
+#     force them through the egress proxy, which rejects them) ----------------
 if ! command -v apt-get >/dev/null 2>&1; then
   log "apt-get unavailable; skipping tool installs (expecting a Debian/Ubuntu image)"
   exit 0
 fi
 
-apt_get update -qq || log "WARN: apt-get update failed"
+DEBIAN_FRONTEND=noninteractive apt-get update -qq || log "WARN: apt-get update failed (continuing)"
 apt_install ca-certificates gnupg curl
 
 # Default-repo tools. gh ships in Ubuntu's universe repo, so no extra repo is
@@ -73,9 +62,9 @@ command -v unzip   >/dev/null 2>&1 || apt_install unzip
 command -v dockerd >/dev/null 2>&1 || apt_install docker.io
 command -v gh      >/dev/null 2>&1 || apt_install gh
 
-# Google Cloud SDK repo -> google-cloud-cli, kubectl, gke auth plugin. The repo
-# key is fetched with curl (which honours the proxy); the install uses apt_get
-# (which now does too). --batch --no-tty: no controlling terminal for gpg.
+# Google Cloud SDK repo -> google-cloud-cli, kubectl, gke auth plugin.
+# Requires the network policy to allow packages.cloud.google.com; if it's
+# blocked the key fetch 403s and these stay uninstalled (logged, non-fatal).
 if ! { command -v gcloud && command -v kubectl && command -v gke-gcloud-auth-plugin; } >/dev/null 2>&1; then
   if [[ ! -f /usr/share/keyrings/cloud.google.gpg ]]; then
     log "configuring Google Cloud apt repo"
@@ -83,10 +72,12 @@ if ! { command -v gcloud && command -v kubectl && command -v gke-gcloud-auth-plu
       | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/cloud.google.gpg \
       && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
          > /etc/apt/sources.list.d/google-cloud-sdk.list \
-      || log "WARN: failed to configure Google Cloud apt repo"
+      || log "WARN: failed to configure Google Cloud apt repo (is packages.cloud.google.com allowed by the network policy?)"
   fi
-  apt_get update -qq || log "WARN: apt-get update failed"
-  apt_install google-cloud-cli kubectl google-cloud-cli-gke-gcloud-auth-plugin
+  if [[ -f /usr/share/keyrings/cloud.google.gpg ]]; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq || log "WARN: apt-get update failed (continuing)"
+    apt_install google-cloud-cli kubectl google-cloud-cli-gke-gcloud-auth-plugin
+  fi
 fi
 
 # Terraform: pinned release zip (curl, not apt, for a reproducible version).

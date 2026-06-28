@@ -26,7 +26,7 @@ session's scope proxy, so use the tarball, not `git clone`:
 
 ```bash
 mkdir -p /tmp/bracket-claude \
-  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v4.tar.gz \
+  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v5.tar.gz \
      | tar -xz -C /tmp/bracket-claude --strip-components=1 \
   && bash /tmp/bracket-claude/claude/cloud-setup.sh
 ```
@@ -50,9 +50,10 @@ filesystem is then snapshotted and reused):
 
 1. Installs the user-scope hooks into `/root/.claude/`.
 2. Installs CLI tools if missing: `gcloud`, `kubectl`,
-   `gke-gcloud-auth-plugin`, `gh`, `docker.io`, `terraform`, `jq`. `apt` is
-   pointed at the sandbox egress proxy (it doesn't read `$HTTPS_PROXY` on its
-   own) so the Google Cloud apt repo is reachable.
+   `gke-gcloud-auth-plugin`, `gh`, `docker.io`, `terraform`, `jq`. Installing
+   `gcloud`/`kubectl`/`gke-gcloud-auth-plugin` needs the environment's network
+   policy to allow `packages.cloud.google.com`; if that host is blocked they are
+   skipped (logged) and the rest still install.
 3. Writes `/etc/docker/daemon.json` (Docker Hub pull-through mirror).
 
 The installed hooks run **every session**:
@@ -82,6 +83,6 @@ developer's own tools, auth, and Docker — unchanged.
 
 ## Updating
 
-Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v5`) and
+Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v6`) and
 bump it in each environment's setup-script URL. Existing environments keep their
 snapshot until recreated.

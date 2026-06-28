@@ -22,35 +22,24 @@ exec 2>>"$LOG_FILE"
 echo "===== session-start run $(date -u +%FT%TZ 2>/dev/null || true) =====" >&2
 log() { echo "session-start: $*" >&2; }
 
-# apt does not read $HTTPS_PROXY; pass the current proxy explicitly, and trust
-# the TLS-inspecting egress proxy CA, so added HTTPS repos are reachable.
-if [[ -f /root/.ccr/ca-bundle.crt && -d /usr/local/share/ca-certificates ]]; then
-  cmp -s /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/bracket-egress.crt 2>/dev/null \
-    || { cp /root/.ccr/ca-bundle.crt /usr/local/share/ca-certificates/bracket-egress.crt && update-ca-certificates >/dev/null 2>&1; } || true
-fi
-apt_get() {
-  local -a px=()
-  [[ -n "${HTTPS_PROXY:-}" ]] && px=(-o "Acquire::http::Proxy=${HTTP_PROXY:-$HTTPS_PROXY}" -o "Acquire::https::Proxy=$HTTPS_PROXY")
-  DEBIAN_FRONTEND=noninteractive apt-get "${px[@]}" "$@"
-}
-
 # --- self-heal CLI tools --------------------------------------------------
 # cloud-setup.sh installs these into the snapshot, but if a pre-launch install
-# missed one, install it here in session context (apt repos are configured in
-# the snapshot already). Installed per-repo so one miss can't abort the rest.
+# missed one, install it here in session context. Plain apt (default Ubuntu
+# repos are reachable directly). The google packages need the network policy to
+# allow packages.cloud.google.com; if blocked, this logs and continues.
 if command -v apt-get >/dev/null 2>&1; then
   gpkgs=()
   command -v gcloud  >/dev/null 2>&1 || gpkgs+=("google-cloud-cli")
   command -v kubectl >/dev/null 2>&1 || gpkgs+=("kubectl")
   command -v gke-gcloud-auth-plugin >/dev/null 2>&1 || gpkgs+=("google-cloud-cli-gke-gcloud-auth-plugin")
   if (( ${#gpkgs[@]} > 0 )) || ! command -v gh >/dev/null 2>&1; then
-    apt_get update -qq >&2 || true
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || true
   fi
   if (( ${#gpkgs[@]} > 0 )); then
     log "self-heal: installing ${gpkgs[*]}"
-    apt_get install -y -qq "${gpkgs[@]}" >&2 || log "WARN: self-heal install failed: ${gpkgs[*]}"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${gpkgs[@]}" >&2 || log "WARN: self-heal install failed: ${gpkgs[*]}"
   fi
-  command -v gh >/dev/null 2>&1 || { log "self-heal: installing gh"; apt_get install -y -qq gh >&2 || log "WARN: gh self-heal failed"; }
+  command -v gh >/dev/null 2>&1 || { log "self-heal: installing gh"; DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh >&2 || log "WARN: gh self-heal failed"; }
 fi
 
 # --- gcloud + ADC as claude-code-bot --------------------------------------
