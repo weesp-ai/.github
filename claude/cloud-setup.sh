@@ -34,42 +34,59 @@ fi
 install -m 0644 "$SCRIPT_DIR/settings.json" /root/.claude/settings.json
 log "installed hooks + settings under /root/.claude"
 
-# --- 2. tools (best-effort; failures here do not undo the hooks) ----------
+# --- 2. tools (best-effort; installed per-repo so one failure can't abort the
+#     rest — e.g. an unavailable `gh` must not take google-cloud-cli down) ----
 if ! command -v apt-get >/dev/null 2>&1; then
   log "apt-get unavailable; skipping tool installs (expecting a Debian/Ubuntu image)"
   exit 0
 fi
 
-# Google Cloud SDK apt repo -> google-cloud-cli, kubectl, gke auth plugin.
+apt_install() {
+  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "$@" >&2 || log "WARN: failed to install: $*"
+}
+
+DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
+# Prereqs for adding the signed apt repos below.
+apt_install ca-certificates gnupg curl
+
+# Default-repo tools.
+command -v jq      >/dev/null 2>&1 || apt_install jq
+command -v unzip   >/dev/null 2>&1 || apt_install unzip
+command -v dockerd >/dev/null 2>&1 || apt_install docker.io
+
+# Google Cloud SDK repo -> google-cloud-cli, kubectl, gke auth plugin.
 # --batch --no-tty: the container has no controlling terminal, so a bare
 # `gpg --dearmor` would abort on /dev/tty.
-if [[ ! -f /usr/share/keyrings/cloud.google.gpg ]]; then
-  log "configuring Google Cloud apt repo"
-  if curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
-       | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/cloud.google.gpg; then
-    echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
-      > /etc/apt/sources.list.d/google-cloud-sdk.list
-    DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
-  else
-    log "WARN: failed to configure Google Cloud apt repo"
+if ! { command -v gcloud && command -v kubectl && command -v gke-gcloud-auth-plugin; } >/dev/null 2>&1; then
+  if [[ ! -f /usr/share/keyrings/cloud.google.gpg ]]; then
+    log "configuring Google Cloud apt repo"
+    curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg \
+      | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/cloud.google.gpg \
+      && echo "deb [signed-by=/usr/share/keyrings/cloud.google.gpg] https://packages.cloud.google.com/apt cloud-sdk main" \
+         > /etc/apt/sources.list.d/google-cloud-sdk.list \
+      || log "WARN: failed to configure Google Cloud apt repo"
   fi
-fi
-
-pkgs=()
-command -v gcloud  >/dev/null 2>&1 || pkgs+=("google-cloud-cli")
-command -v kubectl >/dev/null 2>&1 || pkgs+=("kubectl")
-command -v gke-gcloud-auth-plugin >/dev/null 2>&1 || pkgs+=("google-cloud-cli-gke-gcloud-auth-plugin")
-command -v gh      >/dev/null 2>&1 || pkgs+=("gh")
-command -v dockerd >/dev/null 2>&1 || pkgs+=("docker.io")
-command -v jq      >/dev/null 2>&1 || pkgs+=("jq")
-command -v unzip   >/dev/null 2>&1 || pkgs+=("unzip")
-if (( ${#pkgs[@]} > 0 )); then
-  log "installing: ${pkgs[*]}"
   DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
-  DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${pkgs[@]}" >&2 || log "WARN: some apt packages failed to install"
+  apt_install google-cloud-cli kubectl google-cloud-cli-gke-gcloud-auth-plugin
 fi
 
-# Terraform: pinned release zip (reproducible vs. tracking an apt repo).
+# GitHub CLI repo -> gh. gh is NOT in Ubuntu's default repos, so the repo must
+# be added before installing it, and kept in its own apt transaction so a miss
+# here can't abort the google-cloud-cli install above.
+if ! command -v gh >/dev/null 2>&1; then
+  if [[ ! -f /usr/share/keyrings/githubcli-archive-keyring.gpg ]]; then
+    log "configuring GitHub CLI apt repo"
+    curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg \
+      | gpg --batch --yes --no-tty --dearmor -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+      && echo "deb [signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" \
+         > /etc/apt/sources.list.d/github-cli.list \
+      || log "WARN: failed to configure GitHub CLI apt repo"
+  fi
+  DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || log "WARN: apt-get update failed"
+  apt_install gh
+fi
+
+# Terraform: pinned release zip (curl, not apt, for a reproducible version).
 if ! { command -v terraform >/dev/null 2>&1 \
        && [[ "$(terraform version 2>/dev/null | head -n1)" == "Terraform v${TERRAFORM_VERSION}" ]]; }; then
   case "$(uname -m)" in

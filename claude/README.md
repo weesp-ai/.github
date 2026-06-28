@@ -26,7 +26,7 @@ session's scope proxy, so use the tarball, not `git clone`:
 
 ```bash
 mkdir -p /tmp/bracket-claude \
-  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v2.tar.gz \
+  && curl -fsSL https://github.com/weesp-ai/.github/archive/refs/tags/claude-setup-v3.tar.gz \
      | tar -xz -C /tmp/bracket-claude --strip-components=1 \
   && bash /tmp/bracket-claude/claude/cloud-setup.sh
 ```
@@ -69,6 +69,6 @@ developer's own tools, auth, and Docker — unchanged.
 
 ## Updating
 
-Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v3`) and
+Edit the files here and merge. Then cut a new tag (e.g. `claude-setup-v4`) and
 bump it in each environment's setup-script URL. Existing environments keep their
 snapshot until recreated.

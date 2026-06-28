@@ -15,6 +15,31 @@ set -uo pipefail
 [[ "${CLAUDE_CODE_REMOTE:-}" == "true" ]] || exit 0
 log() { echo "session-start: $*" >&2; }
 
+# --- self-heal CLI tools --------------------------------------------------
+# cloud-setup.sh installs these into the environment snapshot, but its
+# pre-launch context can occasionally fail an apt install. The apt repos are
+# configured in the snapshot regardless, so here — in session context, where
+# apt is reliable — we install anything still missing before it's needed.
+# Installed per-repo so an unavailable `gh` can't abort the gcloud install.
+if command -v apt-get >/dev/null 2>&1; then
+  gpkgs=()
+  command -v gcloud  >/dev/null 2>&1 || gpkgs+=("google-cloud-cli")
+  command -v kubectl >/dev/null 2>&1 || gpkgs+=("kubectl")
+  command -v gke-gcloud-auth-plugin >/dev/null 2>&1 || gpkgs+=("google-cloud-cli-gke-gcloud-auth-plugin")
+  if (( ${#gpkgs[@]} > 0 )) || ! command -v gh >/dev/null 2>&1; then
+    DEBIAN_FRONTEND=noninteractive apt-get update -qq >&2 || true
+  fi
+  if (( ${#gpkgs[@]} > 0 )); then
+    log "self-heal: installing ${gpkgs[*]}"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq "${gpkgs[@]}" >&2 \
+      || log "WARN: self-heal install failed: ${gpkgs[*]}"
+  fi
+  if ! command -v gh >/dev/null 2>&1; then
+    log "self-heal: installing gh"
+    DEBIAN_FRONTEND=noninteractive apt-get install -y -qq gh >&2 || log "WARN: gh self-heal failed"
+  fi
+fi
+
 # --- gcloud + ADC as claude-code-bot --------------------------------------
 if command -v gcloud >/dev/null 2>&1 && [[ -n "${GCP_SERVICE_ACCOUNT_KEY_B64:-}" && -n "${GCP_PROJECT:-}" ]]; then
   key_dir="${HOME}/.config/gcloud-claude"
